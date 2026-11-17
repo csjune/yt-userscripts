@@ -10,7 +10,7 @@
 // @name:pt-BR        Ocultar por padrão o chat ao vivo do YouTube
 // @name:ru           Скрывать чат YouTube по умолчанию
 // @namespace         https://github.com/csjune
-// @version           1.0.1
+// @version           1.0.2
 // @description       Closes the live chat that YouTube opens on its own on videos with live chat. If you open it yourself, it stays open.
 // @description:ko    라이브 채팅이 있는 영상에서 YouTube가 저절로 여는 채팅을 닫습니다. 직접 열면 그대로 둡니다.
 // @description:ja    ライブチャットがある動画で YouTube が自動で開くチャットを閉じます。自分で開いたときはそのままにします。
@@ -23,8 +23,8 @@
 // @description:ru    Закрывает чат, который YouTube сам открывает на видео с чатом. Если открыть его самому, он останется открытым.
 // @author            csjune
 // @license           MIT
-// @homepageURL       https://github.com/csjune/yt-hide-live-chat
-// @supportURL        https://github.com/csjune/yt-hide-live-chat/issues
+// @homepageURL       https://github.com/csjune/yt-userscripts/tree/main/hide-live-chat
+// @supportURL        https://github.com/csjune/yt-userscripts/issues
 // @compatible        firefox
 // @compatible        chrome
 // @match             https://www.youtube.com/*

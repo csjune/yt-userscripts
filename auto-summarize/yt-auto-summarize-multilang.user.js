@@ -10,7 +10,7 @@
 // @name:pt-BR        Resumo automático do YouTube (multilíngue)
 // @name:ru           Автоматическое краткое содержание YouTube (многоязычное)
 // @namespace         https://github.com/csjune
-// @version           1.0.0
+// @version           1.0.1
 // @description       Opens YouTube's Ask panel and requests a summary when the Ask button is available.
 // @description:ko    질문하기(Ask) 버튼이 있는 영상에서 YouTube Ask 패널을 열고 요약을 요청합니다.
 // @description:ja    Ask ボタンがある動画で YouTube の Ask パネルを開き、要約をリクエストします。
@@ -23,8 +23,8 @@
 // @description:ru    Открывает панель Ask на YouTube и запрашивает краткое содержание, когда доступна кнопка Ask.
 // @author            csjune
 // @license           MIT
-// @homepageURL       https://github.com/csjune/yt-auto-summarize-multilang
-// @supportURL        https://github.com/csjune/yt-auto-summarize-multilang/issues
+// @homepageURL       https://github.com/csjune/yt-userscripts/tree/main/auto-summarize
+// @supportURL        https://github.com/csjune/yt-userscripts/issues
 // @compatible        firefox Tested with Violentmonkey
 // @compatible        chrome Tested with ScriptCat
 // @match             https://www.youtube.com/*
