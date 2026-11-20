@@ -31,7 +31,7 @@ function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, n
   }
   const originalPlay = Media.prototype.play;
   const originalPause = Media.prototype.pause;
-  let shortsElement, playerElement, mutationCallback;
+  let shortsElement, playerElement, watchPlayerElement, mutationCallback;
   const elements = new Map(playerConstructor ? [["ytd-player", playerConstructor]] : []);
   const ctx = createContext({
     location: new URL(url, "https://www.youtube.com"), URLSearchParams,
@@ -45,7 +45,7 @@ function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, n
     document: {
       body: {}, documentElement: {},
       addEventListener,
-      querySelector: selector => selector === "ytd-shorts" ? shortsElement : null,
+      querySelector: selector => selector === "ytd-shorts" ? shortsElement : selector === "#movie_player" ? watchPlayerElement : null,
       querySelectorAll: () => playerElement ? [playerElement] : [],
     }, addEventListener,
     MutationObserver: class {
@@ -120,7 +120,41 @@ function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, n
     mutationCallback();
     return { element: playerElement, controller, api, loads, moved, mutate: () => mutationCallback() };
   }
-  return { ctx, config, emit, navigate, play, handlers, Media, originalPlay, originalPause, mediaCalls, mountShorts };
+  function mountWatchPlayer({ id = A, state = 5, locked = false, attach = "mutate" } = {}) {
+    let currentState = state;
+    let currentId = id;
+    const calls = [];
+    function loadVideoById(...args) {
+      calls.push({ args, receiver: this });
+      currentState = 1;
+      return "loaded";
+    }
+    const element = {
+      getPlayerState: () => currentState,
+      getVideoData: () => ({ video_id: currentId }),
+    };
+    if (locked) {
+      Object.defineProperty(element, "loadVideoById", {
+        value: loadVideoById,
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      });
+    } else {
+      element.loadVideoById = loadVideoById;
+    }
+    watchPlayerElement = element;
+    if (attach === "mutate") mutationCallback();
+    else if (attach === "domcontentloaded") emit("DOMContentLoaded");
+    return {
+      element,
+      calls,
+      setState(next) { currentState = next; },
+      setVideoId(next) { currentId = next; },
+      mutate: () => mutationCallback(),
+    };
+  }
+  return { ctx, config, emit, navigate, play, handlers, Media, originalPlay, originalPause, mediaCalls, mountShorts, mountWatchPlayer };
 }
 
 test("initial response selects cue before a player requests playback", () => {
@@ -530,4 +564,96 @@ test("ignores immutable data and cycles without breaking the page", async () => 
   assert.equal(await new f.ctx.Response(cycle).json(), cycle);
   assert.equal(start(cycle), true);
   assert.doesNotThrow(() => fixture({ noResponse: true }));
+});
+
+test("ignores cued same-video loadVideoById calls on watch and live pages", () => {
+  for (const url of [`/watch?v=${A}`, `/live/${A}`]) {
+    const f = fixture({ url });
+    const mp = f.mountWatchPlayer();
+    assert.equal(mp.element.loadVideoById(A, 0), undefined);
+    assert.equal(mp.element.loadVideoById({ videoId: A, startSeconds: 0 }), undefined);
+    assert.deepEqual(mp.calls, []);
+    assert.equal(mp.element.getPlayerState(), 5);
+  }
+});
+
+test("allows loadVideoById after manual watch playback begins", () => {
+  const f = fixture();
+  const mp = f.mountWatchPlayer();
+  f.play(A);
+  assert.equal(mp.element.loadVideoById(A, 0), "loaded");
+  assert.equal(mp.calls.length, 1);
+  assert.deepEqual(mp.calls[0].args, [A, 0]);
+  assert.equal(mp.calls[0].receiver, mp.element);
+});
+
+test("allows loadVideoById when player state is not cued", () => {
+  const f = fixture();
+  const mp = f.mountWatchPlayer();
+  for (const state of [-1, 1, 2]) {
+    mp.setState(state);
+    assert.equal(mp.element.loadVideoById(A, 0), "loaded");
+  }
+  assert.equal(mp.calls.length, 3);
+});
+
+test("allows loadVideoById for another video id, mismatched player video, or on Shorts", () => {
+  const f = fixture();
+  const mp = f.mountWatchPlayer();
+  assert.equal(mp.element.loadVideoById(B, 0), "loaded");
+  assert.equal(mp.element.loadVideoById({ videoId: B, startSeconds: 5 }), "loaded");
+  mp.setState(5);
+  mp.setVideoId(B);
+  assert.equal(mp.element.loadVideoById(A, 0), "loaded");
+  assert.equal(mp.calls.length, 3);
+
+  const shorts = fixture({ url: `/shorts/${A}` });
+  const shortsMp = shorts.mountWatchPlayer({ id: A });
+  assert.equal(shortsMp.element.loadVideoById(A, 0), "loaded");
+  assert.equal(shortsMp.calls.length, 1);
+});
+
+test("does not throw when #movie_player.loadVideoById is locked read-only", () => {
+  const f = fixture();
+  const mp = f.mountWatchPlayer({ locked: true });
+  assert.doesNotThrow(() => {
+    mp.mutate();
+    f.emit("DOMContentLoaded");
+    f.navigate(`/watch?v=${B}`);
+  });
+  assert.equal(mp.element.loadVideoById(A, 0), "loaded");
+  assert.equal(mp.calls.length, 1);
+});
+
+test("hooks via capture-phase DOMContentLoaded, avoids stacking, re-wraps replacement, and rearms on navigation", () => {
+  const f = fixture();
+  assert.equal(f.handlers.get("DOMContentLoaded")[0].capture, true);
+  const mp = f.mountWatchPlayer({ attach: "domcontentloaded" });
+  assert.equal(mp.element.loadVideoById(A, 0), undefined);
+  assert.deepEqual(mp.calls, []);
+
+  const wrapped = mp.element.loadVideoById;
+  mp.mutate();
+  f.emit("DOMContentLoaded");
+  assert.equal(mp.element.loadVideoById, wrapped);
+
+  const replacementCalls = [];
+  mp.element.loadVideoById = function replacement(...args) {
+    replacementCalls.push(args);
+    return "replaced";
+  };
+  mp.mutate();
+  assert.notEqual(mp.element.loadVideoById.name, "replacement");
+  assert.equal(mp.element.loadVideoById(A, 0), undefined);
+  assert.deepEqual(replacementCalls, []);
+
+  f.play(A);
+  assert.equal(mp.element.loadVideoById(A, 0), "replaced");
+  assert.deepEqual(replacementCalls, [[A, 0]]);
+
+  f.navigate(`/watch?v=${B}`);
+  mp.setVideoId(B);
+  mp.setState(5);
+  assert.equal(mp.element.loadVideoById(B, 0), undefined);
+  assert.equal(replacementCalls.length, 1);
 });

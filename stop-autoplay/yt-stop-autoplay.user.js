@@ -10,7 +10,7 @@
 // @name:pt-BR        Parar a reprodução automática do YouTube
 // @name:ru           Остановка автовоспроизведения YouTube
 // @namespace         https://github.com/csjune
-// @version           1.0
+// @version           1.0.1
 // @description       Prevents automatic playback when opening videos, live streams, or Shorts. Play them yourself when ready.
 // @description:ko    동영상, 라이브, 쇼츠를 열 때 자동 재생을 막습니다. 직접 재생하면 그대로 재생됩니다.
 // @description:ja    動画、ライブ配信、ショートを開いたときの自動再生を停止します。手動で再生できます。
@@ -43,6 +43,7 @@
   const attached = new WeakSet();
   const shortsConfigs = new WeakSet();
   const shortsPlayers = new WeakSet();
+  const watchPlayers = new WeakMap();
   const shortsControllers = new WeakSet();
   const playerFactories = new WeakSet();
   let visitKey = null;
@@ -243,6 +244,38 @@
     }
   }
 
+  function attachWatchPlayer() {
+    const mp = document.querySelector("#movie_player");
+    if (!mp || typeof mp.loadVideoById !== "function") return;
+    const original = mp.loadVideoById;
+    if (watchPlayers.get(mp) === original) return;
+    const wrapped = function(...args) {
+      const videoOrConfig = args[0];
+      const targetId = typeof videoOrConfig === "string"
+        ? videoOrConfig
+        : videoOrConfig?.videoId;
+      const id = updateVisit();
+      if (
+        !isShortsPage() &&
+        !started &&
+        id &&
+        targetId === id &&
+        mp.getVideoData?.()?.video_id === id &&
+        mp.getPlayerState?.() === 5
+      ) {
+        return;
+      }
+      return Reflect.apply(original, this, args);
+    };
+    try {
+      mp.loadVideoById = wrapped;
+      watchPlayers.set(mp, mp.loadVideoById === wrapped ? wrapped : original);
+    } catch {
+      // Keep watch playback working if another extension locks loadVideoById.
+      watchPlayers.set(mp, original);
+    }
+  }
+
   function refreshShorts() {
     for (const element of document.querySelectorAll(`ytd-player[context="${SHORTS_CONTEXT}"]`)) {
       attachShortsPlayer(element);
@@ -271,13 +304,18 @@
     if (!controller.isPlayerPaused) controller.isPlayerPaused = true;
   }
 
+  function refresh() {
+    attachWatchPlayer();
+    refreshShorts();
+  }
+
   function onNavigate() {
     updateVisit();
     if (!isShortsPage()) {
       shortsId = null;
       shortsStarted = false;
     }
-    refreshShorts();
+    refresh();
   }
 
   observe(window, "ytInitialPlayerResponse", inspect);
@@ -322,8 +360,10 @@
     event.stopImmediatePropagation();
     player.playVideo();
   }, true);
+  // Capture on window before document listeners and window bubble handlers (e.g. AdGuard).
+  window.addEventListener("DOMContentLoaded", attachWatchPlayer, true);
   document.addEventListener("yt-navigate-finish", onNavigate);
   window.addEventListener("popstate", onNavigate);
-  new MutationObserver(refreshShorts).observe(document, { childList: true, subtree: true });
-  refreshShorts();
+  new MutationObserver(refresh).observe(document, { childList: true, subtree: true });
+  refresh();
 })();
