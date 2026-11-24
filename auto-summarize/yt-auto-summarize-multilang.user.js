@@ -10,7 +10,7 @@
 // @name:pt-BR        Resumo automático do YouTube (multilíngue)
 // @name:ru           Автоматическое краткое содержание YouTube (многоязычное)
 // @namespace         https://github.com/csjune
-// @version           1.0.1
+// @version           1.0.2
 // @description       Opens YouTube's Ask panel and requests a summary when the Ask button is available.
 // @description:ko    질문하기(Ask) 버튼이 있는 영상에서 YouTube Ask 패널을 열고 요약을 요청합니다.
 // @description:ja    Ask ボタンがある動画で YouTube の Ask パネルを開き、要約をリクエストします。
@@ -55,7 +55,7 @@ const ASK_ENTRYPOINT = "button-view-model.you-chat-entrypoint-button";
 // language's chip (2026-10), loose enough to survive small wording changes. Noun forms
 // (resumen, résumé, resumo) are left out since generated questions use them too.
 const SUMMARIZE_LABEL = new RegExp([
-  "summar",                              // en: Summarize the video / Summarise the video
+  "\\bsummari[sz]e\\b.{0,12}\\bvideo\\b", // en: Summarize the video / Summarise the video
   "동영상을 요약",                       // ko: 동영상을 요약해 줘
   "動画を要約",                          // ja: 動画を要約して
   "总结.{0,4}视频",                      // zh-CN: 总结视频
@@ -249,8 +249,11 @@ function findSummarizeChip(staleChips) {
 
   const chips = [...panel.querySelectorAll("you-chat-item-view-model button")].filter(fresh);
   const chipData = chips.map((el) => closestData(el, panel));
+  const byData = summarizeChipByData(chips, chipData);
+  if (byData) return byData;
+  // Never fall back to label or position once chip continuation data is readable.
+  if (chipData.some((data) => typeof data?.continuation === "string")) return null;
   return (
-    summarizeChipByData(chips, chipData) ||
     summarizeChipByLabel(panel, fresh) ||
     // Never guess by position when the data is readable but has no Summarize chip.
     (chipData.every((data) => !data) ? summarizeChipByPosition(panel, fresh) : null)
@@ -287,14 +290,20 @@ function pageDataReadable() {
 
 async function run() {
   const videoId = currentVideoId();
-  if (!videoId || videoId === handledVideoId) return;
+  if (!videoId) {
+    // Off the watch page the Ask panel is gone, so returning to the same video starts fresh.
+    handledVideoId = null;
+    generation++;
+    return;
+  }
+  if (videoId === handledVideoId) return;
 
   const gen = ++generation;
   handledVideoId = videoId;
   log("checking video", videoId);
 
   // Chips already in the panel belong to an earlier video.
-  const staleChips = new Set(askPanel()?.querySelectorAll("button") || []);
+  const staleChips = new Set(askPanel()?.querySelectorAll("button, [role='button']") || []);
 
   if (document.hidden) {
     log("waiting until the tab is visible");

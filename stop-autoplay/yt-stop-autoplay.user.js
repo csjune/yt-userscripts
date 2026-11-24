@@ -10,7 +10,7 @@
 // @name:pt-BR        Parar a reprodução automática do YouTube
 // @name:ru           Остановка автовоспроизведения YouTube
 // @namespace         https://github.com/csjune
-// @version           1.0.1
+// @version           1.0.2
 // @description       Prevents automatic playback when opening videos, live streams, or Shorts. Play them yourself when ready.
 // @description:ko    동영상, 라이브, 쇼츠를 열 때 자동 재생을 막습니다. 직접 재생하면 그대로 재생됩니다.
 // @description:ja    動画、ライブ配信、ショートを開いたときの自動再生を停止します。手動で再生できます。
@@ -122,14 +122,38 @@
 
   function observe(owner, key, transform) {
     const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor && !descriptor.configurable) {
+      try { transform(owner[key]); } catch {}
+      return;
+    }
+    if (descriptor && (descriptor.get || descriptor.set)) {
+      const { get, set, enumerable } = descriptor;
+      if (get) {
+        try { transform(get.call(owner)); } catch {}
+      }
+      try {
+        Object.defineProperty(owner, key, {
+          configurable: true,
+          enumerable,
+          get: get ? function() { return transform(get.call(this)); } : undefined,
+          set: set ? function(next) { set.call(this, transform(next)); } : undefined,
+        });
+      } catch {
+        // Leave the existing accessor intact if redefinition fails.
+      }
+      return;
+    }
     let value = transform(owner[key]);
-    if (descriptor && (!descriptor.configurable || descriptor.get || descriptor.set)) return;
-    Object.defineProperty(owner, key, {
-      configurable: true,
-      enumerable: descriptor?.enumerable ?? true,
-      get() { return value; },
-      set(next) { value = transform(next); },
-    });
+    try {
+      Object.defineProperty(owner, key, {
+        configurable: true,
+        enumerable: descriptor?.enumerable ?? true,
+        get() { return value; },
+        set(next) { value = transform(next); },
+      });
+    } catch {
+      // Leave the property alone if another script locked the owner.
+    }
   }
 
   function configure(key, value) {
@@ -310,9 +334,12 @@
   }
 
   function onNavigate() {
-    updateVisit();
+    const id = updateVisit();
     if (!isShortsPage()) {
       shortsId = null;
+      shortsStarted = false;
+    } else if (id && shortsId && id !== shortsId) {
+      shortsId = id;
       shortsStarted = false;
     }
     refresh();
@@ -344,14 +371,20 @@
       return;
     }
     const watch = event.target.closest?.("ytd-watch-flexy");
-    if (id && watch?.getAttribute("video-id") === id && event.target.closest("#movie_player")) started = true;
+    const watchPlayer = event.target.closest?.("#movie_player");
+    const playingId = watchPlayer?.getVideoData?.()?.video_id;
+    if (id && watch?.getAttribute("video-id") === id && watchPlayer && (!playingId || playingId === id)) {
+      started = true;
+    }
   }, true);
   document.addEventListener("keydown", event => {
     if (!isShortsPage() || event.code !== "Space" || event.defaultPrevented ||
         event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return;
     const target = event.target;
     if (target !== document.body && target !== document.documentElement && !target.closest?.("#shorts-player")) return;
-    const control = target.closest?.("button, a, input, textarea, select, [contenteditable], [role='button']");
+    const control = target.closest?.(
+      "button, a, input, textarea, select, [contenteditable], [role='button'], [role='option'], [role^='menuitem']"
+    );
     if (control && !control.classList?.contains("ytp-large-play-button")) return;
     const player = document.querySelector("ytd-shorts")?.polymerController?.player;
     if (player?.getPlayerState?.() !== 5) return;

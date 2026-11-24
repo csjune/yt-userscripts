@@ -14,7 +14,7 @@ function response(id = A, extra = {}) {
 }
 const start = value => value.playerConfig.playbackStartConfig.startPaused;
 
-function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, noResponse = false, playerConstructor } = {}) {
+function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, noResponse = false, playerConstructor, beforeRun } = {}) {
   const handlers = new Map();
   function addEventListener(type, handler, capture) {
     if (!handlers.has(type)) handlers.set(type, []);
@@ -66,6 +66,7 @@ function fixture({ url = `/watch?v=${A}`, initial, data, frozenConfig = false, n
     return result;
   }
   if (data) ctx.ytcfg = frozenConfig ? Object.freeze(config(data)) : config(data);
+  if (beforeRun) beforeRun(ctx);
   runInContext(source, ctx);
   function emit(type, target = {}, extra = {}) {
     const event = { type, target, ...extra };
@@ -656,4 +657,179 @@ test("hooks via capture-phase DOMContentLoaded, avoids stacking, re-wraps replac
   mp.setState(5);
   assert.equal(mp.element.loadVideoById(B, 0), undefined);
   assert.equal(replacementCalls.length, 1);
+});
+
+test("outgoing #movie_player play event with previous video id cannot release next watch visit", () => {
+  const f = fixture({ url: `/watch?v=${B}`, initial: response(B) });
+  const watch = { getAttribute: key => key === "video-id" ? B : null };
+  let playerVideoId = A;
+  const watchPlayer = { getVideoData: () => ({ video_id: playerVideoId }) };
+  const target = {
+    closest: selector => selector === "ytd-watch-flexy" ? watch : selector === "#movie_player" ? watchPlayer : null,
+  };
+
+  f.emit("play", target);
+  assert.equal(start(f.ctx.ytInitialPlayerResponse), true);
+
+  playerVideoId = B;
+  f.emit("play", target);
+  assert.equal(start(f.ctx.ytInitialPlayerResponse), false);
+});
+
+test("navigating rapidly between Shorts rearms the previous Short even if the other Short never loaded", () => {
+  const f = fixture({ url: `/shorts/${A}` });
+  const s = f.mountShorts();
+  s.element.loadVideoWithPlayerResponse(response(A), { autoplay: "1" });
+  s.api.playVideo();
+
+  f.navigate(`/shorts/${B}`);
+  f.navigate(`/shorts/${A}`);
+  const vars = { autoplay: "1" };
+  s.element.loadVideoWithPlayerResponse(response(A), vars);
+  assert.equal(s.loads.at(-1).paused, true);
+  assert.equal(s.loads.at(-1).args[0].autoplay, "0");
+  assert.deepEqual(f.mediaCalls, ["play"]);
+});
+
+test("Space on Shorts menuitem, menuitemradio, menuitemcheckbox, and option does not start playback, while slider does", () => {
+  const f = fixture({ url: `/shorts/${A}` });
+  const s = f.mountShorts();
+  s.element.loadVideoWithPlayerResponse(response(A));
+
+  function makeRoleTarget(role, classes = []) {
+    const node = {
+      classList: { contains: name => classes.includes(name) },
+      closest(selector) {
+        if (selector === "#shorts-player") return {};
+        const parts = selector.split(",").map(part => part.trim());
+        for (const part of parts) {
+          if (part === `[role='${role}']`) return node;
+          if (part === "[role^='menuitem']" && role && role.startsWith("menuitem")) return node;
+        }
+        return null;
+      },
+    };
+    return node;
+  }
+
+  for (const role of ["menuitem", "menuitemradio", "menuitemcheckbox", "option"]) {
+    const event = {
+      code: "Space",
+      preventDefault() { throw new Error(`must not intercept role=${role}`); },
+      stopImmediatePropagation() { throw new Error(`must not stop role=${role}`); },
+    };
+    f.emit("keydown", makeRoleTarget(role), event);
+  }
+  assert.deepEqual(f.mediaCalls, []);
+
+  const sliderEvent = f.emit("keydown", makeRoleTarget("slider"), {
+    code: "Space",
+    preventDefault() { this.prevented = true; },
+    stopImmediatePropagation() { this.stopped = true; },
+  });
+  assert.equal(sliderEvent.prevented, true);
+  assert.equal(sliderEvent.stopped, true);
+  assert.deepEqual(f.mediaCalls, ["play"]);
+});
+
+test("chains pre-existing configurable Proxy accessor on ytInitialPlayerResponse (AdGuard set-constant)", () => {
+  let stored;
+  let sets = 0;
+  let gets = 0;
+  const f = fixture({
+    beforeRun(ctx) {
+      Object.defineProperty(ctx, "ytInitialPlayerResponse", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          gets++;
+          return stored;
+        },
+        set(val) {
+          sets++;
+          stored = new Proxy(val, {
+            get(target, prop, receiver) {
+              if (prop === "adPlacements") return undefined;
+              return Reflect.get(target, prop, receiver);
+            },
+          });
+        },
+      });
+    },
+  });
+
+  f.ctx.ytInitialPlayerResponse = response(A);
+  assert.equal(sets, 1);
+  assert.equal(start(f.ctx.ytInitialPlayerResponse), true);
+  assert.ok(gets >= 1);
+  assert.equal(f.ctx.ytInitialPlayerResponse.adPlacements, undefined);
+
+  // Even if an external getter replaces or clones the returned object on read, get() transforms it.
+  let clonedRead = false;
+  const fClone = fixture({
+    beforeRun(ctx) {
+      let raw;
+      Object.defineProperty(ctx, "ytInitialPlayerResponse", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          clonedRead = true;
+          return raw ? { videoDetails: raw.videoDetails, playerConfig: { playbackStartConfig: { ...raw.playerConfig.playbackStartConfig } } } : raw;
+        },
+        set(val) { raw = val; },
+      });
+    },
+  });
+  fClone.ctx.ytInitialPlayerResponse = response(A);
+  assert.equal(start(fClone.ctx.ytInitialPlayerResponse), true);
+  assert.equal(clonedRead, true);
+});
+
+test("chains pre-existing configurable accessor on ytcfg", () => {
+  let cfgValue;
+  let sets = 0;
+  const f = fixture({
+    beforeRun(ctx) {
+      Object.defineProperty(ctx, "ytcfg", {
+        configurable: true,
+        enumerable: true,
+        get() { return cfgValue; },
+        set(val) { sets++; cfgValue = val; },
+      });
+    },
+  });
+
+  const cfg = f.config({ WEB_PLAYER_CONTEXT_CONFIGS: { [WATCH]: {} }, EXPERIMENT_FLAGS: {} });
+  f.ctx.ytcfg = cfg;
+  assert.equal(sets, 1);
+  assert.equal(cfg.data_.EXPERIMENT_FLAGS.main_app_preserve_cued_bootstrap_player, true);
+  assert.equal(new URLSearchParams(cfg.data_.WEB_PLAYER_CONTEXT_CONFIGS[WATCH].serializedClientExperimentFlags).get("45872076"), "true");
+});
+
+test("handles getter-only configurable accessors and non-configurable properties without throwing", () => {
+  const roInitial = response(A);
+  const fGetterOnly = fixture({
+    beforeRun(ctx) {
+      Object.defineProperty(ctx, "ytInitialPlayerResponse", {
+        configurable: true,
+        enumerable: true,
+        get() { return roInitial; },
+      });
+    },
+  });
+  assert.equal(start(fGetterOnly.ctx.ytInitialPlayerResponse), true);
+  assert.equal(Object.getOwnPropertyDescriptor(fGetterOnly.ctx, "ytInitialPlayerResponse").set, undefined);
+
+  const nonConfigInitial = response(A);
+  const fNonConfig = fixture({
+    beforeRun(ctx) {
+      Object.defineProperty(ctx, "ytInitialPlayerResponse", {
+        configurable: false,
+        writable: false,
+        enumerable: true,
+        value: nonConfigInitial,
+      });
+    },
+  });
+  assert.equal(start(fNonConfig.ctx.ytInitialPlayerResponse), true);
 });
