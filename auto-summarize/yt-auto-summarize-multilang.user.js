@@ -10,7 +10,7 @@
 // @name:pt-BR        Resumo automático do YouTube (multilíngue)
 // @name:ru           Автоматическое краткое содержание YouTube (многоязычное)
 // @namespace         https://github.com/csjune
-// @version           1.0.2
+// @version           1.0.3
 // @description       Opens YouTube's Ask panel and requests a summary when the Ask button is available.
 // @description:ko    질문하기(Ask) 버튼이 있는 영상에서 YouTube Ask 패널을 열고 요약을 요청합니다.
 // @description:ja    Ask ボタンがある動画で YouTube の Ask パネルを開き、要約をリクエストします。
@@ -251,10 +251,15 @@ function findSummarizeChip(staleChips) {
   const chipData = chips.map((el) => closestData(el, panel));
   const byData = summarizeChipByData(chips, chipData);
   if (byData) return byData;
-  // Never fall back to label or position once chip continuation data is readable.
-  if (chipData.some((data) => typeof data?.continuation === "string")) return null;
+  // Skip buttons whose continuation data already proved they are not Summarize.
+  const rejected = new Set(chips.filter((el, i) => typeof chipData[i]?.continuation === "string"));
+  const canUseLabel = (el) => {
+    if (!fresh(el) || rejected.has(el)) return false;
+    const data = closestData(el, panel);
+    return !(typeof data?.continuation === "string" && !isSummarizeChipData(data));
+  };
   return (
-    summarizeChipByLabel(panel, fresh) ||
+    summarizeChipByLabel(panel, canUseLabel) ||
     // Never guess by position when the data is readable but has no Summarize chip.
     (chipData.every((data) => !data) ? summarizeChipByPosition(panel, fresh) : null)
   );

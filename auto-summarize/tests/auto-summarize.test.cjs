@@ -295,3 +295,17 @@ test("leaving /watch while waiting cancels in-flight observers so late DOM chang
   assert.equal(f.askClicks.length, 0);
   assert.equal(f.chipClicks.length, 0);
 });
+
+test("mixed panel with readable generated chip and label-only Summarize chip still clicks Summarize", async () => {
+  const f = fixture({ readableData: true });
+  await f.flush();
+  assert.equal(f.askClicks.length, 1);
+
+  f.setChips([
+    { label: "How does the speaker summarize the findings?", continuation: continuationFor(1, 6) },
+    { label: "Summarize the video" },
+  ]);
+  await f.flush();
+  assert.equal(f.chipClicks.length, 1);
+  assert.equal(f.chipClicks[0].textContent, "Summarize the video");
+});

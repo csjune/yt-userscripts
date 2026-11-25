@@ -39,16 +39,22 @@ function fixture({ url = `/watch?v=${A}`, videoId = A } = {}) {
     }
   }
 
+  function notifyObservers() {
+    for (const observer of [...observers]) observer.cb();
+  }
+
   const closeButton = {
     click() {
       closeClicks.push({ time: now, via: "close" });
       chatCollapsed = true;
+      notifyObservers();
     },
   };
   const hideButton = {
     click() {
       closeClicks.push({ time: now, via: "hide" });
       chatCollapsed = true;
+      notifyObservers();
     },
   };
 
@@ -158,12 +164,16 @@ function fixture({ url = `/watch?v=${A}`, videoId = A } = {}) {
     ctx,
     FakeElement,
     closeClicks,
+    observers,
     timers,
+    get chatCollapsed() { return chatCollapsed; },
     setChat({ present = chatPresent, collapsed = chatCollapsed, closeReady = iframeCloseReady, hideReady = hideButtonReady } = {}) {
+      const changed = present !== chatPresent || collapsed !== chatCollapsed;
       chatPresent = present;
       chatCollapsed = collapsed;
       iframeCloseReady = closeReady;
       hideButtonReady = hideReady;
+      if (changed) notifyObservers();
     },
     settle,
     advance,
@@ -239,4 +249,37 @@ test("resets on leaving watch page so returning to the same video closes chat ag
   f.setChat({ present: true, collapsed: false, closeReady: true });
   await f.settle();
   assert.equal(f.closeClicks.length, 2);
+});
+
+test("leaves chat open when user reopens it at 100ms between 250ms polls and cleans up observer", async () => {
+  const f = fixture();
+  f.setChat({ present: true, collapsed: false, closeReady: true });
+  await f.settle();
+  assert.equal(f.closeClicks.length, 1);
+  assert.equal(f.chatCollapsed, true);
+  assert.equal(f.observers.size, 1);
+
+  await f.advance(100);
+  f.emitInput("click", new f.FakeElement());
+  f.setChat({ collapsed: false });
+  await f.advance(1500);
+  assert.equal(f.closeClicks.length, 1);
+  assert.equal(f.chatCollapsed, false);
+  assert.equal(f.observers.size, 0);
+});
+
+test("still closes chat when chat auto-opens at 50ms before an outside click at 100ms", async () => {
+  const f = fixture();
+  f.setChat({ present: false });
+  await f.settle();
+
+  await f.advance(50);
+  f.setChat({ present: true, collapsed: false, closeReady: true });
+
+  await f.advance(50);
+  f.emitInput("click", new f.FakeElement());
+
+  await f.advance(200);
+  assert.equal(f.closeClicks.length, 1);
+  assert.equal(f.chatCollapsed, true);
 });

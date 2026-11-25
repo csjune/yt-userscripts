@@ -10,7 +10,7 @@
 // @name:pt-BR        Parar a reprodução automática do YouTube
 // @name:ru           Остановка автовоспроизведения YouTube
 // @namespace         https://github.com/csjune
-// @version           1.0.2
+// @version           1.0.3
 // @description       Prevents automatic playback when opening videos, live streams, or Shorts. Play them yourself when ready.
 // @description:ko    동영상, 라이브, 쇼츠를 열 때 자동 재생을 막습니다. 직접 재생하면 그대로 재생됩니다.
 // @description:ja    動画、ライブ配信、ショートを開いたときの自動再生を停止します。手動で再生できます。
@@ -51,6 +51,7 @@
   let shortsId = null;
   let shortsStarted = false;
   let shortsLoadDepth = 0;
+  let navigatedShortsId = /^\/shorts\/([^/]+)\/?$/.exec(location.pathname)?.[1] || null;
 
   function isShortsPage() {
     return /^\/shorts(?:\/|$)/.test(location.pathname);
@@ -336,11 +337,15 @@
   function onNavigate() {
     const id = updateVisit();
     if (!isShortsPage()) {
+      navigatedShortsId = null;
       shortsId = null;
       shortsStarted = false;
-    } else if (id && shortsId && id !== shortsId) {
-      shortsId = id;
-      shortsStarted = false;
+    } else {
+      if (id && id !== navigatedShortsId && shortsId && id !== shortsId) {
+        shortsId = id;
+        shortsStarted = false;
+      }
+      navigatedShortsId = id;
     }
     refresh();
   }
@@ -372,8 +377,9 @@
     }
     const watch = event.target.closest?.("ytd-watch-flexy");
     const watchPlayer = event.target.closest?.("#movie_player");
-    const playingId = watchPlayer?.getVideoData?.()?.video_id;
-    if (id && watch?.getAttribute("video-id") === id && watchPlayer && (!playingId || playingId === id)) {
+    const hasVideoData = typeof watchPlayer?.getVideoData === "function";
+    const playingId = hasVideoData ? watchPlayer.getVideoData()?.video_id : null;
+    if (id && watch?.getAttribute("video-id") === id && watchPlayer && (!hasVideoData || playingId === id)) {
       started = true;
     }
   }, true);

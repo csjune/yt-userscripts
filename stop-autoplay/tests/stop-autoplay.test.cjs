@@ -833,3 +833,42 @@ test("handles getter-only configurable accessors and non-configurable properties
   });
   assert.equal(start(fNonConfig.ctx.ytInitialPlayerResponse), true);
 });
+
+test("duplicate yt-navigate-finish on current Short does not unpause preloaded next Short", () => {
+  const f = fixture({ url: `/shorts/${A}` });
+  const s = f.mountShorts();
+  s.element.loadVideoWithPlayerResponse(response(A));
+  s.api.playVideo();
+
+  const nextB = response(B);
+  s.element.loadVideoWithPlayerResponse(nextB);
+  assert.equal(start(nextB), true);
+
+  f.navigate(`/shorts/${A}`);
+  assert.equal(start(nextB), true);
+
+  // Genuine rapid navigation A -> B -> A still rearms A even if startPaused getter called updateVisit() earlier.
+  f.navigate(`/shorts/${B}`);
+  f.navigate(`/shorts/${A}`);
+  const vars = { autoplay: "1" };
+  s.element.loadVideoWithPlayerResponse(response(A), vars);
+  assert.equal(s.loads.at(-1).paused, true);
+  assert.equal(s.loads.at(-1).args[0].autoplay, "0");
+});
+
+test("empty getVideoData object on #movie_player does not release next watch visit", () => {
+  const f = fixture({ url: `/watch?v=${B}`, initial: response(B) });
+  const watch = { getAttribute: key => key === "video-id" ? B : null };
+  let videoData = {};
+  const watchPlayer = { getVideoData: () => videoData };
+  const target = {
+    closest: selector => selector === "ytd-watch-flexy" ? watch : selector === "#movie_player" ? watchPlayer : null,
+  };
+
+  f.emit("play", target);
+  assert.equal(start(f.ctx.ytInitialPlayerResponse), true);
+
+  videoData = { video_id: B };
+  f.emit("play", target);
+  assert.equal(start(f.ctx.ytInitialPlayerResponse), false);
+});

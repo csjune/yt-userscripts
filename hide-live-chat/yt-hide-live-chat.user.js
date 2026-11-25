@@ -10,7 +10,7 @@
 // @name:pt-BR        Ocultar por padrão o chat ao vivo do YouTube
 // @name:ru           Скрывать чат YouTube по умолчанию
 // @namespace         https://github.com/csjune
-// @version           1.0.3
+// @version           1.0.4
 // @description       Closes the live chat that YouTube opens on its own on videos with live chat. If you open it yourself, it stays open.
 // @description:ko    라이브 채팅이 있는 영상에서 YouTube가 저절로 여는 채팅을 닫습니다. 직접 열면 그대로 둡니다.
 // @description:ja    ライブチャットがある動画で YouTube が自動で開くチャットを閉じます。自分で開いたときはそのままにします。
@@ -174,7 +174,8 @@ async function run() {
   let seenAt = 0;
   let clickedAt = 0;
   let wasOpen = false;
-  while (gen === generation) {
+  function syncChatState() {
+    if (gen !== generation) return false;
     const now = Date.now();
     const current = chatFrame();
     // A replaced chat element is a new chat: start the watch period over.
@@ -182,27 +183,43 @@ async function run() {
       frame = current;
       seenAt = frame ? now : 0;
     }
-    if (seenAt ? now > seenAt + WATCH_AFTER_CHAT_MS : now > readyAt + CHAT_APPEAR_TIMEOUT_MS) {
-      log(seenAt ? "done watching chat" : "no live chat");
-      return;
-    }
-
     const open = Boolean(frame && isOpen(frame));
     // Only a closed-to-open transition right after user input counts as user-opened.
     if (open && !wasOpen && lastInputAt > readyAt && now - lastInputAt < USER_OPEN_MS) {
       userOpenedGeneration = gen;
     }
     wasOpen = open;
+    return open;
+  }
 
-    if (open && userOpenedGeneration === gen) {
-      log("chat opened by user, leaving it open");
-      return;
+  const observer = new MutationObserver(syncChatState);
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["collapsed"],
+  });
+  try {
+    while (gen === generation) {
+      const open = syncChatState();
+      const now = Date.now();
+      if (seenAt ? now > seenAt + WATCH_AFTER_CHAT_MS : now > readyAt + CHAT_APPEAR_TIMEOUT_MS) {
+        log(seenAt ? "done watching chat" : "no live chat");
+        return;
+      }
+      if (open && userOpenedGeneration === gen) {
+        log("chat opened by user, leaving it open");
+        return;
+      }
+      if (open && now > clickedAt + CLICK_COOLDOWN_MS && closeChat(frame)) {
+        log("closing chat");
+        clickedAt = now;
+        syncChatState();
+      }
+      await sleep(POLL_MS);
     }
-    if (open && now > clickedAt + CLICK_COOLDOWN_MS && closeChat(frame)) {
-      log("closing chat");
-      clickedAt = now;
-    }
-    await sleep(POLL_MS);
+  } finally {
+    observer.disconnect();
   }
 }
 
