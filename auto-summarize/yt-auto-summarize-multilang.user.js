@@ -10,7 +10,7 @@
 // @name:pt-BR        Resumo automático do YouTube (multilíngue)
 // @name:ru           Автоматическое краткое содержание YouTube (многоязычное)
 // @namespace         https://github.com/csjune
-// @version           1.0.3
+// @version           1.0.4
 // @description       Opens YouTube's Ask panel and requests a summary when the Ask button is available.
 // @description:ko    질문하기(Ask) 버튼이 있는 영상에서 YouTube Ask 패널을 열고 요약을 요청합니다.
 // @description:ja    Ask ボタンがある動画で YouTube の Ask パネルを開き、要約をリクエストします。
@@ -55,8 +55,8 @@ const ASK_ENTRYPOINT = "button-view-model.you-chat-entrypoint-button";
 // language's chip (2026-10), loose enough to survive small wording changes. Noun forms
 // (resumen, résumé, resumo) are left out since generated questions use them too.
 const SUMMARIZE_LABEL = new RegExp([
-  "\\bsummari[sz]e\\b.{0,12}\\bvideo\\b", // en: Summarize the video / Summarise the video
-  "동영상을 요약",                       // ko: 동영상을 요약해 줘
+  "^summari[sz]e\\b.{0,12}\\bvideo\\b",  // en: Summarize the video / Summarise the video
+  "동영상을\\s*요약",                    // ko: 동영상을 요약해 줘
   "動画を要約",                          // ja: 動画を要約して
   "总结.{0,4}视频",                      // zh-CN: 总结视频
   "影片摘要",                            // zh-TW: 生成影片摘要
@@ -66,6 +66,19 @@ const SUMMARIZE_LABEL = new RegExp([
   "resum(?:a|ir)\\b.{0,8}v[ií]deo",      // pt-BR: Resuma o vídeo
   "пересказ.{0,10}видео",                // ru: Краткий пересказ видео
 ].join("|"), "i");
+const EXACT_SUMMARIZE_LABEL = new RegExp(`^(?:${[
+  "summari[sz]e(?:\\s+(?:the|this))?\\s+video",
+  "동영상을\\s*요약해\\s*줘",
+  "動画を要約して",
+  "总结视频",
+  "生成影片摘要",
+  "resum(?:e|ir)\\s+el\\s+v[ií]deo",
+  "résum(?:e|er)\\s+la\\s+vidéo",
+  "fass\\w*\\s+das\\s+video\\s+zusammen",
+  "resum(?:a|ir)\\s+o\\s+v[ií]deo",
+  "краткий\\s+пересказ\\s+видео",
+].join("|")})$`, "i");
+const SUPPORTED_LABEL_LANGS = new Set(["en", "ko", "ja", "zh", "es", "fr", "de", "pt", "ru"]);
 
 const ACTIONS_READY_TIMEOUT_MS = 15000;
 const ASK_AFTER_READY_TIMEOUT_MS = 2000;
@@ -90,6 +103,12 @@ function isVisible(el) {
 
 function labelOf(el) {
   return (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function hasSupportedUiLanguage() {
+  const lang = (document.documentElement?.lang || "").trim().toLowerCase();
+  if (!lang) return false;
+  return SUPPORTED_LABEL_LANGS.has(lang.split(/[-_]/)[0]);
 }
 
 // YouTube keeps each element's renderer data in an expando `data` property.
@@ -260,8 +279,11 @@ function findSummarizeChip(staleChips) {
   };
   return (
     summarizeChipByLabel(panel, canUseLabel) ||
-    // Never guess by position when the data is readable but has no Summarize chip.
-    (chipData.every((data) => !data) ? summarizeChipByPosition(panel, fresh) : null)
+    // Never guess by position when page data is readable, or when the UI language
+    // already has a label pattern above (wait for the real Summarize chip instead).
+    (chipData.every((data) => !data) && !hasSupportedUiLanguage()
+      ? summarizeChipByPosition(panel, fresh)
+      : null)
   );
 }
 
@@ -273,12 +295,15 @@ function summarizeChipByData(chips, chipData) {
 }
 
 function summarizeChipByLabel(panel, fresh) {
+  let fallback = null;
   for (const el of panel.querySelectorAll("button, [role='button']")) {
     const text = labelOf(el);
-    // Only short labels: longer text is a wrapping container or an answer body, not a chip.
-    if (text.length < 80 && SUMMARIZE_LABEL.test(text) && fresh(el)) return el;
+    // Only short non-question labels: longer text or questions belong to answers or generated prompts.
+    if (text.length >= 80 || /[?？]$/.test(text) || !SUMMARIZE_LABEL.test(text) || !fresh(el)) continue;
+    if (EXACT_SUMMARIZE_LABEL.test(text)) return el;
+    if (!fallback) fallback = el;
   }
-  return null;
+  return fallback;
 }
 
 // Without page data, pick by position: Summarize has always been the first chip.

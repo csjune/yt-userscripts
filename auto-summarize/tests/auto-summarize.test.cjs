@@ -28,7 +28,7 @@ function makeButton({ label = "", ariaLabel, visible = true, continuation, onTap
   return el;
 }
 
-function fixture({ url = `/watch?v=${A}`, videoId = A, readableData = true, actionsVisible: initialActionsVisible = true } = {}) {
+function fixture({ url = `/watch?v=${A}`, videoId = A, readableData = true, actionsVisible: initialActionsVisible = true, lang = "en" } = {}) {
   const listeners = new Map();
   const observers = new Set();
   const timers = new Set();
@@ -121,6 +121,7 @@ function fixture({ url = `/watch?v=${A}`, videoId = A, readableData = true, acti
     },
     document: {
       hidden: false,
+      documentElement: { lang },
       body: {},
       addEventListener(type, fn) {
         if (!listeners.has(type)) listeners.set(type, []);
@@ -308,4 +309,67 @@ test("mixed panel with readable generated chip and label-only Summarize chip sti
   await f.flush();
   assert.equal(f.chipClicks.length, 1);
   assert.equal(f.chipClicks[0].textContent, "Summarize the video");
+});
+
+test("label fallback rejects mid-sentence summarize questions and prefers exact Summarize chip over longer match", async () => {
+  const f = fixture({ readableData: false, lang: "en-US" });
+  await f.flush();
+
+  f.setChips([{ label: "How would you summarize the video in one sentence?" }]);
+  await f.flush();
+  assert.equal(f.chipClicks.length, 0);
+
+  f.setChips([
+    { label: "How would you summarize the video in one sentence?" },
+    { label: "Summarize the video in 3 bullets" },
+    { label: "Summarize the video" },
+  ]);
+  await f.flush();
+  assert.equal(f.chipClicks.length, 1);
+  assert.equal(f.chipClicks[0].textContent, "Summarize the video");
+
+  const mixed = fixture({ readableData: true, lang: "en-US" });
+  await mixed.flush();
+  mixed.setChips([
+    { label: "Quiz me", continuation: continuationFor(1, 6) },
+    { label: "How would you summarize the video in one sentence?" },
+    { label: "Summarize the video" },
+  ]);
+  await mixed.flush();
+  assert.equal(mixed.chipClicks.length, 1);
+  assert.equal(mixed.chipClicks[0].textContent, "Summarize the video");
+});
+
+test("isolated world skips position fallback for supported UI languages and uses it only for unsupported or unknown languages", async () => {
+  for (const [lang, expected] of [
+    ["en-US", "Summarize the video"],
+    ["ko-KR", "동영상을 요약해 줘"],
+    ["zh-Hans-CN", "总结视频"],
+    ["es-419", "Resume el video"],
+  ]) {
+    const f = fixture({ readableData: false, lang });
+    await f.flush();
+
+    f.setChips([{ label: "Why did the team change plans?" }]);
+    await f.flush();
+    assert.equal(f.chipClicks.length, 0);
+
+    f.setChips([
+      { label: "Why did the team change plans?" },
+      { label: expected },
+    ]);
+    await f.flush();
+    assert.equal(f.chipClicks.length, 1);
+    assert.equal(f.chipClicks[0].textContent, expected);
+  }
+
+  for (const lang of ["it-IT", ""]) {
+    const f = fixture({ readableData: false, lang });
+    await f.flush();
+
+    f.setChips([{ label: "Riassumi il video" }]);
+    await f.flush();
+    assert.equal(f.chipClicks.length, 1);
+    assert.equal(f.chipClicks[0].textContent, "Riassumi il video");
+  }
 });

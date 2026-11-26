@@ -10,7 +10,7 @@
 // @name:pt-BR        Ocultar por padrão o chat ao vivo do YouTube
 // @name:ru           Скрывать чат YouTube по умолчанию
 // @namespace         https://github.com/csjune
-// @version           1.0.4
+// @version           1.0.5
 // @description       Closes the live chat that YouTube opens on its own on videos with live chat. If you open it yourself, it stays open.
 // @description:ko    라이브 채팅이 있는 영상에서 YouTube가 저절로 여는 채팅을 닫습니다. 직접 열면 그대로 둡니다.
 // @description:ja    ライブチャットがある動画で YouTube が自動で開くチャットを閉じます。自分で開いたときはそのままにします。
@@ -223,16 +223,23 @@ async function run() {
   }
 }
 
+// Regions whose controls cannot open the live chat panel.
+const IGNORED_INPUT_SCOPE = "#movie_player, #masthead-container, #owner, #comments, #related";
+// Interactive controls that could plausibly reopen the live chat panel.
+const CHAT_OPEN_CONTROL = "ytd-live-chat-frame, button, [role='button'], yt-button-shape, ytd-button-renderer, ytd-toggle-button-renderer, tp-yt-paper-button";
+
 function onInput(event) {
   if (!event.isTrusted) return;
   if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
   const target = event.target instanceof Element ? event.target : null;
-  // Video player interactions cannot open the live chat panel.
-  if (target?.closest("#movie_player")) return;
-  if (event.type === "keydown" && (!target || target === document.body || target === document.documentElement)) return;
+  if (!target) return;
+  // Ignore non-interactive clicks (title, whitespace, plain text) and controls in
+  // sections that cannot open live chat.
+  if (target.closest(IGNORED_INPUT_SCOPE)) return;
+  if (!target.closest(CHAT_OPEN_CONTROL)) return;
   lastInputAt = Date.now();
   // Any click on the chat element itself (such as "Show chat") is the user's choice.
-  if (target?.closest("ytd-live-chat-frame")) {
+  if (target.closest("ytd-live-chat-frame")) {
     userOpenedGeneration = generation;
   }
 }

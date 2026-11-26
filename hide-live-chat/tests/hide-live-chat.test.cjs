@@ -26,7 +26,7 @@ function fixture({ url = `/watch?v=${A}`, videoId = A } = {}) {
       this.selectors = selectors;
     }
     closest(selector) {
-      return this.selectors.includes(selector) ? this : null;
+      return selector.split(",").some(part => this.selectors.includes(part.trim())) ? this : null;
     }
   }
 
@@ -189,7 +189,7 @@ test("closes auto-opened chat even if user clicks outside while close button is 
   assert.equal(f.closeClicks.length, 0);
 
   await f.advance(50);
-  f.emitInput("click", new f.FakeElement());
+  f.emitInput("click", new f.FakeElement({ selectors: ["button"] }));
 
   f.setChat({ closeReady: true });
   await f.advance(250);
@@ -217,7 +217,7 @@ test("leaves chat open when user reopens it after closing, even within click coo
   assert.equal(f.closeClicks.length, 1);
 
   await f.advance(300);
-  f.emitInput("click", new f.FakeElement());
+  f.emitInput("click", new f.FakeElement({ selectors: ["button"] }));
   f.setChat({ collapsed: false });
   await f.advance(1500);
   assert.equal(f.closeClicks.length, 1);
@@ -260,7 +260,7 @@ test("leaves chat open when user reopens it at 100ms between 250ms polls and cle
   assert.equal(f.observers.size, 1);
 
   await f.advance(100);
-  f.emitInput("click", new f.FakeElement());
+  f.emitInput("click", new f.FakeElement({ selectors: ["button"] }));
   f.setChat({ collapsed: false });
   await f.advance(1500);
   assert.equal(f.closeClicks.length, 1);
@@ -277,9 +277,48 @@ test("still closes chat when chat auto-opens at 50ms before an outside click at 
   f.setChat({ present: true, collapsed: false, closeReady: true });
 
   await f.advance(50);
-  f.emitInput("click", new f.FakeElement());
+  f.emitInput("click", new f.FakeElement({ selectors: ["button"] }));
 
   await f.advance(200);
   assert.equal(f.closeClicks.length, 1);
   assert.equal(f.chatCollapsed, true);
+});
+
+test("still closes chat when user clicks non-interactive element or unrelated section button before chat auto-opens", async () => {
+  for (const selectors of [
+    [],
+    ["#masthead-container", "button"],
+    ["#owner", "button"],
+    ["#comments", "button"],
+    ["#related", "button"],
+  ]) {
+    const f = fixture();
+    f.setChat({ present: false });
+    await f.settle();
+
+    await f.advance(50);
+    f.emitInput("click", new f.FakeElement({ selectors }));
+
+    await f.advance(50);
+    f.setChat({ present: true, collapsed: false, closeReady: true });
+
+    await f.advance(250);
+    assert.equal(f.closeClicks.length, 1);
+    assert.equal(f.chatCollapsed, true);
+  }
+});
+
+test("leaves chat open when user reopens via keyboard Enter on a focused reopen button", async () => {
+  const f = fixture();
+  f.setChat({ present: true, collapsed: false, closeReady: true });
+  await f.settle();
+  assert.equal(f.closeClicks.length, 1);
+  assert.equal(f.chatCollapsed, true);
+
+  await f.advance(100);
+  f.emitInput("keydown", new f.FakeElement({ selectors: ["button"] }), { key: "Enter" });
+  f.setChat({ collapsed: false });
+  await f.advance(1500);
+  assert.equal(f.closeClicks.length, 1);
+  assert.equal(f.chatCollapsed, false);
 });
